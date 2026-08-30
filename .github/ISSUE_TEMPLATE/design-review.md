@@ -34,6 +34,10 @@ into smaller pieces first, not the template made longer.
 
 **7. Any new external service, dependency, or secret involved?**
 
+
+**8. Open questions / things you're not sure about yet.**
+(If any part of this design isn't fully worked out, say so here instead of glossing over it in the answers above. An honest "I haven't figured this out" is more useful to the reviewer than a confident-sounding answer that hides an unresolved gap. Leave blank only if there genuinely are none.)
+
 ---
 
 ### For the reviewing champion — do not fill in above this line
