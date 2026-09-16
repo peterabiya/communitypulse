@@ -1,0 +1,20 @@
+rules:
+  - id: communitypulse-thread-delete-without-ownership-check
+    languages:
+      - typescript
+      - javascript
+    message: "Thread deletion must verify ownership with assertOwner() before the Prisma delete."
+    severity: ERROR
+    patterns:
+      - pattern: |
+          await prisma.thread.delete(...)
+      - pattern-inside: |
+          async function $FUNC(...) {
+            ...
+          }
+      - pattern-not-inside: |
+          async function $FUNC(...) {
+            ...
+            assertOwner(...);
+            ...
+          }
