@@ -59,6 +59,25 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Build application
+        run: npm run build
+
+      - name: Package production build
+        run: |
+          tar -czf communitypulse-next-build.tar.gz .next
+          sha256sum communitypulse-next-build.tar.gz
+
+      - name: Attest production build provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: communitypulse-next-build.tar.gz
+
+      - name: Upload production build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: communitypulse-next-build
+          path: communitypulse-next-build.tar.gz
+
       # KNOWN, DOCUMENTED RISK: next@14.2.35 has multiple unpatched high-severity
       # advisories (DoS, SSRF, cache poisoning, XSS via CSP nonces). Next.js
       # 13.x/14.x are past their security-patch window per Vercel (no fix will
