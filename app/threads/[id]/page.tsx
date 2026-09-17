@@ -4,6 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
 import CommentForm from "./comment-form";
 
+export const dynamic = "force-dynamic";
+
 export default async function ThreadDetailPage({
   params,
 }: {

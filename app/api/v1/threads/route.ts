@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
+export const dynamic = "force-dynamic";
+
 /**
  * PUBLIC INTEGRATION API — no API key, no auth, deliberately. Unlike
  * LedgerLite's /api/v1 (private data, gated by an API key) or
