@@ -17,6 +17,47 @@ jobs:
         with:
           fetch-depth: 0
 
+canary:
+    name: Canary Gate (Preview Deployment Security Check)
+    needs: [security]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Deploys THIS PR's exact code to a real Vercel preview and captures
+      # its URL — the canary gate scans this specific candidate release,
+      # not a stale or shared staging environment.
+      - name: Deploy PR to Vercel Preview
+        id: deploy
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          npx vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
+          npx vercel build --token="$VERCEL_TOKEN"
+          url=$(npx vercel deploy --prebuilt --token="$VERCEL_TOKEN")
+          echo "preview_url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Setup k6
+        uses: grafana/setup-k6-action@v1
+
+      # Reuses Project 8's Scenario 1 script unmodified. Its own
+      # thresholds block (attack_requests_blocked: ['rate>=0.95']) IS the
+      # pass/fail gate: k6 exits non-zero on threshold failure, which
+      # fails this job, which blocks merge per branch protection.
+      - name: Run canary security check (rate-limit verification)
+        uses: grafana/run-k6-action@v1
+        env:
+          STAGING_URL: ${{ steps.deploy.outputs.preview_url }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        with:
+          path: docs/security/scenario-1-bulk-scrape.k6.js 
+
       - name: Secret scan (Gitleaks)
         uses: gitleaks/gitleaks-action@v2
         env:
