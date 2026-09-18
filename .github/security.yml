@@ -1,0 +1,115 @@
+name: Security Checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Secret scan (Gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: SAST (Semgrep)
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: p/javascript p/typescript p/nextjs p/owasp-top-ten
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      # KNOWN, DOCUMENTED RISK: next@14.2.35 has multiple unpatched high-severity
+      # advisories (DoS, SSRF, cache poisoning, XSS via CSP nonces). Next.js
+      # 13.x/14.x are past their security-patch window per Vercel (no fix will
+      # land on the 14.x line). The available fix (next@16.x) previously broke
+      # this app's Clerk middleware + Prisma edge connectivity when tested
+      # locally (see docs/security/known-risks.md and day1-build-log.md for
+      # the full story). Deliberately not force-upgrading here; continue-on-error
+      # keeps this finding VISIBLE in every CI run instead of hiding it, while
+      # not hard-blocking the pipeline on a risk we've made a documented call
+      # about. Proper upgrade evaluation is scoped to Project 9 (supply chain /
+      # release security) — see docs/security/known-risks.md.
+      - name: Dependency audit (SCA)
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: sbom.cdx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.cdx.json
+
+      # Project 5 (Cloud & IaC Hardening): if config-as-code is added for
+      # Cloudflare/Vercel settings, Checkov scans it here. Left as a
+      # separate, non-blocking step until that IaC exists in the repo.
+      - name: IaC/config scan (Checkov)
+        if: hashFiles('**/*.tf') != ''
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          quiet: true
+
+  canary:
+    name: Canary Gate (Preview Deployment Security Check)
+    needs: [security]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Deploys THIS PR's exact code to a real Vercel preview and captures
+      # its URL — the canary gate scans this specific candidate release,
+      # not a stale or shared staging environment.
+      - name: Deploy PR to Vercel Preview
+        id: deploy
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          npx vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
+          npx vercel build --token="$VERCEL_TOKEN"
+          url=$(npx vercel deploy --prebuilt --token="$VERCEL_TOKEN")
+          echo "preview_url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Setup k6
+        uses: grafana/setup-k6-action@v1
+
+      # Reuses Project 8's Scenario 1 script unmodified. Its own
+      # thresholds block (attack_requests_blocked: ['rate>=0.95']) IS the
+      # pass/fail gate: k6 exits non-zero on threshold failure, which
+      # fails this job, which blocks merge per branch protection.
+      - name: Run canary security check (rate-limit verification)
+        uses: grafana/run-k6-action@v1
+        env:
+          STAGING_URL: ${{ steps.deploy.outputs.preview_url }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        with:
+          path: docs/security/scenario-1-bulk-scrape.k6.js
