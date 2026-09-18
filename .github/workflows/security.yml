@@ -8,6 +8,8 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  id-token: write
+  attestations: write
 
 jobs:
   security:
@@ -22,10 +24,32 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: SAST (Semgrep)
-        uses: semgrep/semgrep-action@v1
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          config: p/javascript p/typescript p/nextjs p/owasp-top-ten
+          python-version: "3.12"
+
+      - name: Install Semgrep
+        run: python -m pip install "semgrep==1.177.0"
+
+      - name: Verify Semgrep version
+        run: semgrep --version
+
+      - name: Validate custom Semgrep rules
+        run: semgrep --validate --config .semgrep/authorization.yml
+
+      - name: Test custom Semgrep rules
+        run: semgrep --test --config .semgrep/authorization.yml .semgrep/authorization.ts
+
+      - name: SAST (Semgrep)
+        run: |
+          semgrep \
+            --config p/javascript \
+            --config p/typescript \
+            --config p/nextjs \
+            --config p/owasp-top-ten \
+            --config .semgrep/authorization.yml \
+            .
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -34,6 +58,31 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Build application
+        run: npm run build
+        env:
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+
+      - name: Package production build
+        run: |
+          tar -czf communitypulse-next-build.tar.gz .next
+          sha256sum communitypulse-next-build.tar.gz
+
+      # NOTE: GitHub artifact attestations are only supported on public repos
+      # (or GitHub Enterprise Cloud for private repos). This step is gated
+      # so it skips silently on the private repo instead of failing the job.
+      - name: Attest production build provenance
+        if: github.event.repository.visibility == 'public'
+        uses: actions/attest@v4
+        with:
+          subject-path: communitypulse-next-build.tar.gz
+
+      - name: Upload production build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: communitypulse-next-build
+          path: communitypulse-next-build.tar.gz
 
       # KNOWN, DOCUMENTED RISK: next@14.2.35 has multiple unpatched high-severity
       # advisories (DoS, SSRF, cache poisoning, XSS via CSP nonces). Next.js
